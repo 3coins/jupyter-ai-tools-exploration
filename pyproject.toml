@@ -23,16 +23,21 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "jupyter_server>=2.4.0,<3"
+    "jupyter_server>=2.4.0,<3",
+    "jupyter_server_ai_tools",
+    "jupyter_ai_tools",
+    "jupyter_ai>=3.0.0a1",
+    "langchain-aws",
+    "langgraph"
 ]
-dynamic = ["version"]
+version = "0.0.1"
 
 [[project.authors]]
-name = "Jupyter Development Team"
-email = "jupyter@googlegroups.com"
+name = "Piyush Jain"
+email = "piyushjain@duck.com"
 
 [project.urls]
-Homepage = "https://jupyter.org"
+Homepage = "https://github.com/3coins/jupyter-ai-tools-exploration"
 
 [project.optional-dependencies]
 test = [
