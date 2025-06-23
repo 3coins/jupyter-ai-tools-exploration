@@ -10,13 +10,6 @@ except ImportError:
 from .handlers import setup_handlers
 
 
-def _jupyter_labextension_paths():
-    return [{
-        "src": "labextension",
-        "dest": ""
-    }]
-
-
 def _jupyter_server_extension_points():
     return [{
         "module": "jupyter_ai_tools_exploration"
@@ -34,3 +27,7 @@ def _load_jupyter_server_extension(server_app):
     setup_handlers(server_app.web_app)
     name = "jupyter_ai_tools_exploration"
     server_app.log.info(f"Registered {name} server extension")
+
+
+async def _start_jupyter_server_extension(server_app):
+    pass

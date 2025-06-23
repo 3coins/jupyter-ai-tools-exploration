@@ -25,10 +25,9 @@ classifiers = [
 dependencies = [
     "jupyter_server>=2.4.0,<3",
     "jupyter_server_ai_tools",
-    "jupyter_ai_tools",
     "jupyter_ai>=3.0.0a1",
     "langchain-aws",
-    "langgraph"
+    "langgraph",
 ]
 version = "0.0.1"
 
@@ -62,3 +61,6 @@ version_cmd = "hatch version"
 
 [tool.check-wheel-contents]
 ignore = ["W002"]
+
+[project.entry-points."jupyter_ai.personas"]
+finance_persona = "jupyter_ai_tools_exploration.persona:TestPersona"
