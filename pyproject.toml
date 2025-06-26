@@ -24,8 +24,8 @@ classifiers = [
 ]
 dependencies = [
     "jupyter_server>=2.4.0,<3",
-    "jupyter_server_ai_tools",
     "jupyter_ai>=3.0.0a1",
+    "jupyter_ai_tools",
     "langchain-aws",
     "langgraph",
 ]

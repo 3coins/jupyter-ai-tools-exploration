@@ -1,7 +1,17 @@
-from typing import Any
-from pydantic import Field, BaseModel
+from typing import Any, Sequence
+import uuid
 
 from jupyterlab_chat.models import Message
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+    AIMessage,
+    FunctionMessage,
+    ChatMessage,
+    SystemMessage,
+    AIMessageChunk,
+)
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
@@ -15,12 +25,6 @@ from jupyter_ai.personas.jupyternaut.prompt_template import (
 from .agent import create_agent
 
 
-class UserQueryClassifier(BaseModel):
-    needs_notebook_action: bool = Field(
-        description="Returns True if the request calls for an action to the notebook, else False"
-    )
-
-
 class TestPersona(BasePersona):
     """The Test persona, using natural language to do various tasks in a notebook."""
 
@@ -28,9 +32,8 @@ class TestPersona(BasePersona):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.agent = create_agent(
-            model="us.meta.llama4-scout-17b-instruct-v1:0"
-        )
+        self.agent = create_agent()
+        self.thread_id = str(uuid.uuid4())
 
     @property
     def defaults(self):
@@ -42,10 +45,9 @@ class TestPersona(BasePersona):
         )
 
     async def process_message(self, message: Message):
-        provider_name = self.config.lm_provider.name
-        model_id = self.config.lm_provider_params["model_id"]
+        provider_name = self.config_manager.lm_provider.name
+        model_id = self.config_manager.lm_provider_params["model_id"]
 
-        runnable = self.build_runnable()
         variables = JupyternautVariables(
             input=message.body,
             model_id=model_id,
@@ -53,31 +55,17 @@ class TestPersona(BasePersona):
             persona_name=self.name,
         )
 
-        # Check if the prompt is about finance. If so, pass on to agentic workflow, else use default handling
-        prompt = variables.input.split(" ", 1)[1]
-        llm = self.config.lm_provider(**self.config.lm_provider_params)
-        llm = llm.with_structured_output(
-            UserQueryClassifier,
-        )
-        response = llm.invoke(prompt)  # Gets the full AI message response
-
-        # If the message does not ask for a notebook action, proceed with default handling
-        if response.needs_notebook_action:  # type:ignore[union-attr]
-            msg = variables.input.split(" ", 1)[1].strip()
-            if msg:
-                # Call the agno_finance function to process the message
-                self.run_notebook_agent(msg)
-            else:
-                self.send_message(
-                    "Error: Query failed. Please try again with a different query."
-                )
-        else:  # If the message is not finance-related, use the default runnable
-            variables_dict = variables.model_dump()
-            reply_stream = runnable.astream(variables_dict)
-            await self.stream_message(reply_stream)
+        at_mention = f"@{self.name}"
+        msg = variables.input.strip().replace(at_mention, "")
+        if msg:
+            await self.run_notebook_agent(msg)
+        else:
+            self.send_message(
+                "Error: Query failed. Please try again with a different query."
+            )
 
     def build_runnable(self) -> Any:
-        llm = self.config.lm_provider(**self.config.lm_provider_params)
+        llm = self.config_manager.lm_provider(**self.config_manager.lm_provider_params)
         runnable = JUPYTERNAUT_PROMPT_TEMPLATE | llm | StrOutputParser()
         runnable = RunnableWithMessageHistory(
             runnable=runnable,  #  type:ignore[arg-type]
@@ -87,16 +75,97 @@ class TestPersona(BasePersona):
         )
         return runnable
 
-    def run_notebook_agent(self, message: Message):
-        self.send_message("The test agent is processing your request...")
-        response = self.agent.invoke({
-            "messages": [message]
-        })
+    async def run_notebook_agent(self, message: Message):
+        self.send_message(f"The {self.name} is processing your request...\n")
+        config = {"configurable": {"thread_id": self.thread_id}}
 
-        if response:
-            last_message = response["messages"][-1]
-            self.send_message(last_message.content)
+        async def extract_content_stream(original_stream):
+            async for message, _ in original_stream:
+                for content in message.content:
+                    if "type" in content and content["type"] == "text":
+                        yield content['text']
+
+        stream = extract_content_stream(
+            self.agent.astream({"messages": [message]}, config, stream_mode="messages")
+        )
+        await self.stream_message(stream)
+
+
+def serialize_messages(
+    messages: Sequence[BaseMessage], human_prefix: str = "Human", ai_prefix: str = "AI"
+) -> str:
+    r"""Convert a sequence of Messages to strings and concatenate them into one string.
+
+    Args:
+        messages: Messages to be converted to strings.
+        human_prefix: The prefix to prepend to contents of HumanMessages.
+            Default is "Human".
+        ai_prefix: THe prefix to prepend to contents of AIMessages. Default is "AI".
+
+    Returns:
+        A single string concatenation of all input messages.
+
+    Raises:
+        ValueError: If an unsupported message type is encountered.
+
+    Example:
+        .. code-block:: python
+
+            from langchain_core import AIMessage, HumanMessage
+
+            messages = [
+                HumanMessage(content="Hi, how are you?"),
+                AIMessage(content="Good, how are you?"),
+            ]
+            get_buffer_string(messages)
+            # -> "Human: Hi, how are you?\nAI: Good, how are you?"
+    """
+    string_messages = []
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            role = human_prefix
+        elif isinstance(m, AIMessage):
+            role = ai_prefix
+        elif isinstance(m, SystemMessage):
+            role = "System"
+        elif isinstance(m, FunctionMessage):
+            role = "Function"
+        elif isinstance(m, ToolMessage):
+            role = "Tool"
+            m.content = "Completed execution..."
+        elif isinstance(m, ChatMessage):
+            role = m.role
         else:
-            self.send_message(
-                "No response received from the test agent, please try again!"
-            )
+            msg = f"Got unsupported message type: {m}"
+            raise ValueError(msg)  # noqa: TRY004
+
+        content = m.content
+        # Handle different content types
+        if isinstance(content, list):
+            # List of strings case
+            if all(isinstance(item, str) for item in content):
+                content = "".join(content)
+            # List of dictionaries with 'type' and 'text' keys case
+            elif all(isinstance(item, dict) for item in content):
+                result = []
+                for item in content:
+                    if item.get("type") == "text" and "text" in item:
+                        result.append(item["text"])
+                    elif (
+                        item.get("type") == "tool_use"
+                        and "name" in item
+                        and "input" in item
+                    ):
+                        tool_name = item.get("name")
+                        tool_input = item.get("input")
+                        result.append(
+                            f"\n\nCalling **{tool_name}** with inputs: {tool_input}"
+                        )
+                content = "".join(result)
+
+        message = f"{role}: {content}"
+        if isinstance(m, AIMessage) and "function_call" in m.additional_kwargs:
+            message += f"{m.additional_kwargs['function_call']}"
+        string_messages.append(message)
+
+    return "\n".join(string_messages)
