@@ -1,17 +1,8 @@
-from typing import Any, Sequence
+from typing import Any
 import uuid
 
 from jupyterlab_chat.models import Message
-from langchain_core.messages import (
-    BaseMessage,
-    HumanMessage,
-    ToolMessage,
-    AIMessage,
-    FunctionMessage,
-    ChatMessage,
-    SystemMessage,
-    AIMessageChunk,
-)
+
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
@@ -32,7 +23,7 @@ class TestPersona(BasePersona):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.agent = create_agent()
+        self.agent = create_agent(get_workspace_path=self.get_workspace_dir)
         self.thread_id = str(uuid.uuid4())
 
     @property
@@ -64,6 +55,7 @@ class TestPersona(BasePersona):
                 "Error: Query failed. Please try again with a different query."
             )
 
+    # This is not used in the TestPersona
     def build_runnable(self) -> Any:
         llm = self.config_manager.lm_provider(**self.config_manager.lm_provider_params)
         runnable = JUPYTERNAUT_PROMPT_TEMPLATE | llm | StrOutputParser()
@@ -83,89 +75,17 @@ class TestPersona(BasePersona):
             async for message, _ in original_stream:
                 for content in message.content:
                     if "type" in content and content["type"] == "text":
-                        yield content['text']
+                        yield content["text"]
+
+        async def extract_content_stream_with_values(original_stream):
+            async for s in original_stream:
+                message = s["messages"][-1]
+                if isinstance(message, tuple):
+                    yield str(message)
+                else:
+                    yield message.pretty_repr()
 
         stream = extract_content_stream(
             self.agent.astream({"messages": [message]}, config, stream_mode="messages")
         )
         await self.stream_message(stream)
-
-
-def serialize_messages(
-    messages: Sequence[BaseMessage], human_prefix: str = "Human", ai_prefix: str = "AI"
-) -> str:
-    r"""Convert a sequence of Messages to strings and concatenate them into one string.
-
-    Args:
-        messages: Messages to be converted to strings.
-        human_prefix: The prefix to prepend to contents of HumanMessages.
-            Default is "Human".
-        ai_prefix: THe prefix to prepend to contents of AIMessages. Default is "AI".
-
-    Returns:
-        A single string concatenation of all input messages.
-
-    Raises:
-        ValueError: If an unsupported message type is encountered.
-
-    Example:
-        .. code-block:: python
-
-            from langchain_core import AIMessage, HumanMessage
-
-            messages = [
-                HumanMessage(content="Hi, how are you?"),
-                AIMessage(content="Good, how are you?"),
-            ]
-            get_buffer_string(messages)
-            # -> "Human: Hi, how are you?\nAI: Good, how are you?"
-    """
-    string_messages = []
-    for m in messages:
-        if isinstance(m, HumanMessage):
-            role = human_prefix
-        elif isinstance(m, AIMessage):
-            role = ai_prefix
-        elif isinstance(m, SystemMessage):
-            role = "System"
-        elif isinstance(m, FunctionMessage):
-            role = "Function"
-        elif isinstance(m, ToolMessage):
-            role = "Tool"
-            m.content = "Completed execution..."
-        elif isinstance(m, ChatMessage):
-            role = m.role
-        else:
-            msg = f"Got unsupported message type: {m}"
-            raise ValueError(msg)  # noqa: TRY004
-
-        content = m.content
-        # Handle different content types
-        if isinstance(content, list):
-            # List of strings case
-            if all(isinstance(item, str) for item in content):
-                content = "".join(content)
-            # List of dictionaries with 'type' and 'text' keys case
-            elif all(isinstance(item, dict) for item in content):
-                result = []
-                for item in content:
-                    if item.get("type") == "text" and "text" in item:
-                        result.append(item["text"])
-                    elif (
-                        item.get("type") == "tool_use"
-                        and "name" in item
-                        and "input" in item
-                    ):
-                        tool_name = item.get("name")
-                        tool_input = item.get("input")
-                        result.append(
-                            f"\n\nCalling **{tool_name}** with inputs: {tool_input}"
-                        )
-                content = "".join(result)
-
-        message = f"{role}: {content}"
-        if isinstance(m, AIMessage) and "function_call" in m.additional_kwargs:
-            message += f"{m.additional_kwargs['function_call']}"
-        string_messages.append(message)
-
-    return "\n".join(string_messages)
