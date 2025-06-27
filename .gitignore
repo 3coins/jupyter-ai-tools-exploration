@@ -125,3 +125,15 @@ dmypy.json
 .yarn/
 
 playground/
+
+# ystore
+*.db
+
+# vscode
+.vscode/
+
+# jupyter notebooks
+*.ipynb
+
+# chat files
+*.chat
