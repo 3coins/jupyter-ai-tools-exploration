@@ -26,7 +26,7 @@ dependencies = [
     "jupyter_server>=2.4.0,<3",
     "jupyter_ai>=3.0.0a1",
     "jupyter_ai_tools>=0.2.1",
-    "jupyter_server_documents>=0.1.0a3"
+    "jupyter_server_documents>=0.1.0a3",
     "langchain-aws",
     "langgraph",
 ]
