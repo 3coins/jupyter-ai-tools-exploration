@@ -23,7 +23,9 @@ class TestPersona(BasePersona):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.agent = create_agent(get_workspace_path=self.get_workspace_dir)
+        self.agent = create_agent(
+            get_workspace_path=self.get_workspace_dir, log=self.log
+        )
         self.thread_id = str(uuid.uuid4())
 
     @property
@@ -36,23 +38,14 @@ class TestPersona(BasePersona):
         )
 
     async def process_message(self, message: Message):
-        provider_name = self.config_manager.lm_provider.name
-        model_id = self.config_manager.lm_provider_params["model_id"]
-
-        variables = JupyternautVariables(
-            input=message.body,
-            model_id=model_id,
-            provider_name=provider_name,
-            persona_name=self.name,
-        )
-
         at_mention = f"@{self.name}"
-        msg = variables.input.strip().replace(at_mention, "")
+        msg = message.body.strip().replace(at_mention, "")
+        
         if msg:
             await self.run_notebook_agent(msg)
         else:
             self.send_message(
-                "Error: Query failed. Please try again with a different query."
+                "Empty prompt received. Please try again with a valid prompt."
             )
 
     # This is not used in the TestPersona
@@ -71,21 +64,31 @@ class TestPersona(BasePersona):
         self.send_message(f"The {self.name} is processing your request...\n")
         config = {"configurable": {"thread_id": self.thread_id}}
 
-        async def extract_content_stream(original_stream):
-            async for message, _ in original_stream:
-                for content in message.content:
-                    if "type" in content and content["type"] == "text":
-                        yield content["text"]
-
-        async def extract_content_stream_with_values(original_stream):
-            async for s in original_stream:
-                message = s["messages"][-1]
-                if isinstance(message, tuple):
-                    yield str(message)
-                else:
-                    yield message.pretty_repr()
-
         stream = extract_content_stream(
-            self.agent.astream({"messages": [message]}, config, stream_mode="messages")
+            self.agent.astream({"messages": [message]}, config, stream_mode="messages"),
+            log=self.log,
         )
         await self.stream_message(stream)
+
+
+async def extract_content_stream(original_stream, log):
+    """Handles messages from the stream when stream_mode is 'messages'"""
+    async for message, _ in original_stream:
+        log.debug(message)
+        if isinstance(message.content, str):
+            yield message.content
+        elif isinstance(message.content, list):
+            for content in message.content:
+                if "type" in content and content["type"] == "text":
+                    yield content["text"]
+
+
+async def extract_content_stream_with_values(original_stream, log):
+    """Handles messages from the stream when stream_mode is 'values'"""
+    async for s in original_stream:
+        message = s["messages"][-1]
+        log.debug(s)
+        if isinstance(message, tuple):
+            yield str(message)
+        else:
+            yield message.pretty_repr()
